@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2D Plus Formen - Linear Fade</title>
+    <title>2D Plus Formen - Extended Depth</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #111; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #040D70; font-family: sans-serif; }
         canvas { display: block; }
         
         #info {
@@ -30,10 +30,10 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 60px;
+            gap: 40px;
             color: white;
             z-index: 10;
-            background: linear-gradient(to top, rgba(0,0,0,0.95), transparent);
+            background: linear-gradient(to top, rgba(4, 13, 112, 0.95), transparent);
             padding-bottom: 40px;
             padding-top: 40px;
         }
@@ -56,7 +56,7 @@
 
         input[type=range] {
             -webkit-appearance: none;
-            width: 200px;
+            width: 150px;
             height: 4px;
             background: rgba(255, 255, 255, 0.2);
             border-radius: 2px;
@@ -72,23 +72,30 @@
             background: #ffffff;
             cursor: pointer;
             box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
-            transition: transform 0.1s;
             margin-top: 0;
         }
-        
-        input[type=range]::-webkit-slider-thumb:hover {
-            transform: scale(1.1);
-            background: #00ffff;
-        }
 
-        input[type=range]::-moz-range-thumb {
+        .checkbox-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-left: 20px;
+            background: rgba(255,255,255,0.1);
+            padding: 8px 12px;
+            border-radius: 20px;
+        }
+        
+        input[type=checkbox] {
             width: 18px;
             height: 18px;
-            border-radius: 50%;
-            background: #ffffff;
             cursor: pointer;
-            border: none;
-            box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+            accent-color: #00ffff;
+        }
+        
+        .checkbox-wrapper label {
+            margin: 0;
+            cursor: pointer;
+            color: white;
         }
     </style>
     <script type="importmap">
@@ -101,20 +108,27 @@
     </script>
 </head>
 <body>
-    <div id="info">Scrollen: Zum Logo fliegen</div>
+    <div id="info">Scrollen: Zum Logo fliegen (400 Objekte)</div>
     
     <div id="controls">
-        <!-- Regler 1: Maximale Unschärfe bei Z=0 (Kamera) -->
         <div class="control-group">
-            <label for="blurSlider">Intensität (Max Blur bei Kamera)</label>
-            <input type="range" id="blurSlider" min="0" max="100" value="50">
+            <label for="blurSlider">Blur Stärke</label>
+            <input type="range" id="blurSlider" min="0" max="100" value="40">
         </div>
 
-        <!-- Regler 2: Wo endet der Blur? -->
         <div class="control-group">
-            <label for="focusSlider">Blur-Ende (Tiefe)</label>
-            <!-- Wertebereich angepasst für die Szene (Logo ist bei 500 Distanz) -->
-            <input type="range" id="focusSlider" min="50" max="600" value="300">
+            <label for="focusSlider">Blur Bereich (Tiefe)</label>
+            <input type="range" id="focusSlider" min="10" max="1000" value="300">
+        </div>
+        
+        <div class="checkbox-wrapper">
+            <input type="checkbox" id="gridToggle">
+            <label for="gridToggle">Raster</label>
+        </div>
+
+        <div class="checkbox-wrapper">
+            <input type="checkbox" id="debugToggle">
+            <label for="debugToggle">Debug Zone</label>
         </div>
     </div>
     
@@ -125,39 +139,47 @@
         import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
         import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
 
+        // --- Globale Variablen ---
         let camera, scene, renderer, composer, bokehPass;
-        const plusShapes = []; 
+        let debugMesh;
+        let isReady = false; 
+        
+        const plusObjects = []; 
+        let isGridMode = false; 
 
-        const LOGO_Z = -500;
+        // Konstanten
+        const BACKGROUND_COLOR = 0x040D70; 
+        const LOGO_Z = -1000; // Weiter nach hinten geschoben für mehr Tiefe
         const LOGO_HEIGHT = 4; 
-        const TARGET_DISTANCE = 57;
+        const TARGET_DISTANCE = 57; 
         const MIN_Z = LOGO_Z + TARGET_DISTANCE; 
 
-        // --- Steuerungsvariablen ---
+        // Animation State
         let targetZ = 40;     
         const START_Z = 40;   
         const MAX_Z = 150;    
-        
-        const SCROLL_SENSITIVITY = 0.15; 
-        const EASE_FACTOR = 0.08;       
+        const SCROLL_SENSITIVITY = 0.25; // Etwas schnelleres Scrollen für den tieferen Raum
+        const CAMERA_EASE_FACTOR = 0.08;
+        const OBJECT_EASE_FACTOR = 0.05; 
 
-        init();
-        animate();
+        // Transparenz-Einstellungen angepasst an die neue Tiefe
+        const FADE_START_DIST = 300; 
+        const FADE_END_DIST = 1100;   
 
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111111);
-            scene.fog = new THREE.Fog(0x111111, 10, 600);
+            scene.background = new THREE.Color(BACKGROUND_COLOR);
+            // Scene Fog ist aus, wir machen manuellen Fade.
 
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 1000);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 1500); // Far Plane erhöht
             camera.position.z = START_Z;
             targetZ = START_Z;
 
             renderer = new THREE.WebGLRenderer({ 
-                antialias: true, 
-                powerPreference: "high-performance",
-                precision: "highp"
+                antialias: true,
+                powerPreference: "high-performance"
             });
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio); 
             document.body.appendChild(renderer.domElement);
@@ -168,131 +190,104 @@
             directionalLight.position.set(0, 2, 10).normalize();
             scene.add(directionalLight);
 
-            // --- PLUS FORMEN ---
+            // --- Plus-Objekte ---
             const geometryV = new THREE.PlaneGeometry(1, 4);
             const geometryH = new THREE.PlaneGeometry(4, 1);
             
-            const material = new THREE.MeshStandardMaterial({ 
+            const baseMaterial = new THREE.MeshStandardMaterial({ 
                 color: 0xffffff, 
-                roughness: 0.7,
-                metalness: 0.1,
-                emissive: 0x000000,
-                side: THREE.DoubleSide 
+                roughness: 0.7, 
+                metalness: 0.1, 
+                emissive: 0x000000, 
+                side: THREE.DoubleSide,
+                transparent: true, 
+                opacity: 1.0
             });
 
-            for (let i = 0; i < 200; i++) {
-                const group = new THREE.Group();
-                const meshV = new THREE.Mesh(geometryV, material);
-                const meshH = new THREE.Mesh(geometryH, material);
-                meshH.position.z = 0.01;
+            // Raster Setup erweitert für 400 Objekte
+            const cols = 5;
+            const rows = 4;
+            const layers = 20; // Verdoppelt auf 20 Layer Tiefe
+            const gapX = 30;
+            const gapY = 30;
+            const gapZ = 50;
+            const offX = (cols - 1) * gapX / 2;
+            const offY = (rows - 1) * gapY / 2;
+            const startZ = 20;
 
-                group.add(meshV);
-                group.add(meshH);
+            for (let z = 0; z < layers; z++) {
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        
+                        const group = new THREE.Group();
+                        const instanceMaterial = baseMaterial.clone();
 
-                group.position.x = (Math.random() - 0.5) * 120;
-                group.position.y = (Math.random() - 0.5) * 100;
-                group.position.z = 50 - Math.random() * 450; 
+                        const meshV = new THREE.Mesh(geometryV, instanceMaterial);
+                        const meshH = new THREE.Mesh(geometryH, instanceMaterial);
+                        meshH.position.z = 0.01;
+                        group.add(meshV);
+                        group.add(meshH);
 
-                scene.add(group);
-                plusShapes.push(group);
+                        // Zufallsverteilung tiefer gestreckt (bis ca. -950)
+                        const randomPos = new THREE.Vector3(
+                            (Math.random() - 0.5) * 140,
+                            (Math.random() - 0.5) * 100,
+                            50 - Math.random() * 950 
+                        );
+
+                        const gridPos = new THREE.Vector3(
+                            (x * gapX) - offX,
+                            (y * gapY) - offY,
+                            startZ - (z * gapZ)
+                        );
+
+                        group.position.copy(randomPos);
+                        scene.add(group);
+                        
+                        plusObjects.push({
+                            mesh: group,
+                            randomPos: randomPos,
+                            gridPos: gridPos,
+                            material: instanceMaterial
+                        });
+                    }
+                }
             }
 
-            // --- SVG LOGO ---
             loadBackgroundSVG();
-
+            initDebugCube();
             initPostProcessing();
-
-            // Event Listener
-            const blurSlider = document.getElementById('blurSlider');
-            const focusSlider = document.getElementById('focusSlider');
-
-            blurSlider.addEventListener('input', (e) => {
-                const value = parseInt(e.target.value);
-                if (bokehPass) {
-                    bokehPass.uniforms['aperture'].value = value * 0.00001; 
-                }
-            });
-
-            focusSlider.addEventListener('input', (e) => {
-                const value = parseInt(e.target.value);
-                if (bokehPass) {
-                    bokehPass.uniforms['focus'].value = value;
-                }
-            });
+            setupUI();
 
             window.addEventListener('resize', onWindowResize);
             window.addEventListener('wheel', onMouseWheel);
+
+            isReady = true;
         }
 
-        function loadBackgroundSVG() {
-            const mySVG = `
-            <svg id="Logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80.24 40.12">
-              <defs>
-                <style>
-                  .cls-1 {
-                    fill: #fff;
-                  }
-                </style>
-              </defs>
-              <path class="cls-1" d="M77.96,10.82c-3.35-6.42-10.06-10.82-17.81-10.82h-23.6v16.5h-16.49v7.11h16.49v9.39h-16.48c-2.89,0-5.55-.96-7.7-2.56-3.18-2.36-5.26-6.13-5.26-10.39,0-7.15,5.81-12.95,12.96-12.95h8.24V0h-8.24C9,0,0,8.98,0,20.06c0,3.79,1.1,7.34,2.98,10.39,3.54,5.76,9.88,9.67,17.1,9.67h40.07c7.28,0,13.66-3.94,17.19-9.77,1.82-3.02,2.9-6.53,2.9-10.29,0-3.34-.83-6.47-2.27-9.24ZM68,30.35c-2.18,1.66-4.89,2.66-7.84,2.66h-16.47v-9.39h16.5v-7.11h-16.5V7.11h16.47c3.53,0,6.73,1.42,9.07,3.7,2.4,2.35,3.89,5.62,3.89,9.24,0,4.2-2.01,7.92-5.12,10.29Z"/>
-            </svg>
-            `;
-
-            const svgUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(mySVG);
-
-            const loader = new SVGLoader();
-            loader.load(
-                svgUrl,
-                function (data) {
-                    const paths = data.paths;
-                    const group = new THREE.Group();
-
-                    for (let i = 0; i < paths.length; i++) {
-                        const path = paths[i];
-                        const material = new THREE.MeshBasicMaterial({
-                            color: path.color || 0xffffff,
-                            side: THREE.DoubleSide,
-                            depthWrite: false
-                        });
-
-                        const shapes = SVGLoader.createShapes(path);
-
-                        for (let j = 0; j < shapes.length; j++) {
-                            const shape = shapes[j];
-                            const geometry = new THREE.ShapeGeometry(shape);
-                            const mesh = new THREE.Mesh(geometry, material);
-                            group.add(mesh);
-                        }
-                    }
-
-                    group.scale.set(1, -1, 1); 
-                    const box = new THREE.Box3().setFromObject(group);
-                    const center = box.getCenter(new THREE.Vector3());
-                    const size = box.getSize(new THREE.Vector3());
-
-                    group.position.x = -center.x;
-                    group.position.y = -center.y; 
-                    group.position.z = LOGO_Z; 
-
-                    const desiredHeight = LOGO_HEIGHT; 
-                    const scaleFactor = desiredHeight / size.y;
-                    
-                    group.scale.x *= scaleFactor;
-                    group.scale.y *= scaleFactor;
-                    group.scale.z *= scaleFactor;
-
-                    scene.add(group);
-                }
-            );
+        function initDebugCube() {
+            const geo = new THREE.BoxGeometry(1, 1, 1);
+            const mat = new THREE.MeshBasicMaterial({ 
+                color: 0xff0000, 
+                transparent: true, 
+                opacity: 0.15,
+                side: THREE.DoubleSide,
+                depthWrite: false 
+            });
+            debugMesh = new THREE.Mesh(geo, mat);
+            debugMesh.visible = false; 
+            scene.add(debugMesh);
         }
 
         function initPostProcessing() {
             const renderTarget = new THREE.WebGLRenderTarget(
                 window.innerWidth * window.devicePixelRatio,
                 window.innerHeight * window.devicePixelRatio,
-                { 
-                    type: THREE.HalfFloatType,
-                    samples: 8 
+                {
+                    minFilter: THREE.LinearFilter,
+                    magFilter: THREE.LinearFilter,
+                    format: THREE.RGBAFormat,
+                    type: THREE.HalfFloatType 
                 }
             );
 
@@ -302,45 +297,118 @@
             const renderPass = new RenderPass(scene, camera);
             composer.addPass(renderPass);
 
-            // Initialwerte
-            const initialFocus = 300.0; 
-            const initialAperture = 50 * 0.00001; 
+            const bokehParams = {
+                focus: 300.0,
+                aperture: 0.0004, 
+                maxblur: 0.015,
+            };
 
-            bokehPass = new BokehPass(scene, camera, {
-                focus: initialFocus,
-                aperture: initialAperture,
-                maxblur: 0.02, 
-            });
+            bokehPass = new BokehPass(scene, camera, bokehParams);
+            
+            bokehPass.materialBokeh.defines['RINGS'] = 5;
+            bokehPass.materialBokeh.defines['SAMPLES'] = 8;
+            bokehPass.materialBokeh.needsUpdate = true;
 
-            // -------------------------------------------------------------------------
-            // SHADER HACK FÜR LINEAREN VERLAUF (One-Sided Blur)
-            // -------------------------------------------------------------------------
-            // Der Standard-Shader berechnet den Blur als Distanz in BEIDE Richtungen: 
-            // abs(depth - focalDepth).
-            // Wir ändern das im Shader-Code zu: max(focalDepth - depth, 0.0).
-            // Das bedeutet: 
-            // Wenn Tiefe < Fokus (näher zur Kamera) -> Blur.
-            // Wenn Tiefe > Fokus (weiter weg) -> Kein Blur (0.0).
-            // -------------------------------------------------------------------------
-            
-            const materialBokeh = bokehPass.materialBokeh;
-            
-            // Wir verwenden einen Regex, um die Stelle im minifizierten oder normalen Code zu finden
-            // Standard Three.js Shader: abs( depth - fDepth )
-            materialBokeh.fragmentShader = materialBokeh.fragmentShader.replace(
-                /abs\s*\(\s*depth\s*-\s*fDepth\s*\)/g, 
-                'max(fDepth - depth, 0.0)'
+            const originalFrag = bokehPass.materialBokeh.fragmentShader;
+            bokehPass.materialBokeh.fragmentShader = originalFrag.replace(
+                /float\s+fDepth\s*=\s*abs\s*\(\s*depth\s*-\s*focus\s*\)\s*;/g, 
+                'float fDepth = max( focus - depth, 0.0 );'
             );
-            
-            // Shader muss neu kompiliert werden
-            materialBokeh.needsUpdate = true;
+            bokehPass.materialBokeh.needsUpdate = true;
 
-            // Werte setzen
-            bokehPass.uniforms['focus'].value = initialFocus; 
-            bokehPass.uniforms['aperture'].value = initialAperture; 
-            bokehPass.uniforms['maxblur'].value = 0.02;
+            bokehPass.uniforms['focus'].value = 300.0;
+            bokehPass.uniforms['aperture'].value = 40 * 0.00001; 
+            bokehPass.uniforms['maxblur'].value = 0.015; 
 
             composer.addPass(bokehPass);
+        }
+
+        function loadBackgroundSVG() {
+            const mySVG = `
+            <svg id="Logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80.24 40.12">
+              <defs> <style> .cls-1 { fill: #fff; } </style> </defs>
+              <path class="cls-1" d="M77.96,10.82c-3.35-6.42-10.06-10.82-17.81-10.82h-23.6v16.5h-16.49v7.11h16.49v9.39h-16.48c-2.89,0-5.55-.96-7.7-2.56-3.18-2.36-5.26-6.13-5.26-10.39,0-7.15,5.81-12.95,12.96-12.95h8.24V0h-8.24C9,0,0,8.98,0,20.06c0,3.79,1.1,7.34,2.98,10.39,3.54,5.76,9.88,9.67,17.1,9.67h40.07c7.28,0,13.66-3.94,17.19-9.77,1.82-3.02,2.9-6.53,2.9-10.29,0-3.34-.83-6.47-2.27-9.24ZM68,30.35c-2.18,1.66-4.89,2.66-7.84,2.66h-16.47v-9.39h16.5v-7.11h-16.5V7.11h16.47c3.53,0,6.73,1.42,9.07,3.7,2.4,2.35,3.89,5.62,3.89,9.24,0,4.2-2.01,7.92-5.12,10.29Z"/>
+            </svg>
+            `;
+
+            const svgUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(mySVG);
+            const loader = new SVGLoader();
+
+            loader.load(svgUrl, function (data) {
+                const paths = data.paths;
+                const group = new THREE.Group();
+
+                for (let i = 0; i < paths.length; i++) {
+                    const path = paths[i];
+                    const material = new THREE.MeshBasicMaterial({
+                        color: path.color || 0xffffff,
+                        side: THREE.DoubleSide,
+                        depthWrite: false
+                    });
+                    const shapes = SVGLoader.createShapes(path);
+                    for (let j = 0; j < shapes.length; j++) {
+                        const shape = shapes[j];
+                        const geometry = new THREE.ShapeGeometry(shape);
+                        const mesh = new THREE.Mesh(geometry, material);
+                        group.add(mesh);
+                    }
+                }
+
+                group.scale.set(1, -1, 1); 
+                const box = new THREE.Box3().setFromObject(group);
+                const size = box.getSize(new THREE.Vector3());
+                const center = box.getCenter(new THREE.Vector3());
+                
+                group.position.x = -center.x;
+                group.position.y = -center.y;
+                
+                const wrapper = new THREE.Group();
+                wrapper.add(group);
+                wrapper.position.set(0, 0, LOGO_Z);
+
+                const scaleFactor = LOGO_HEIGHT / size.y;
+                wrapper.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+                scene.add(wrapper);
+            });
+        }
+
+        function setupUI() {
+            const blurSlider = document.getElementById('blurSlider');
+            const focusSlider = document.getElementById('focusSlider');
+            const debugToggle = document.getElementById('debugToggle');
+            const gridToggle = document.getElementById('gridToggle'); 
+
+            blurSlider.addEventListener('input', (e) => {
+                if (!isReady || !bokehPass) return;
+                const val = parseInt(e.target.value);
+                bokehPass.uniforms['aperture'].value = val * 0.00001; 
+            });
+
+            focusSlider.addEventListener('input', (e) => {
+                if (!isReady || !bokehPass) return;
+                const dist = parseInt(e.target.value);
+                bokehPass.uniforms['focus'].value = dist;
+                updateDebugCube(dist);
+            });
+
+            debugToggle.addEventListener('change', (e) => {
+                if (!isReady) return;
+                debugMesh.visible = e.target.checked;
+                updateDebugCube(bokehPass.uniforms['focus'].value);
+            });
+
+            gridToggle.addEventListener('change', (e) => {
+                isGridMode = e.target.checked;
+            });
+            
+            updateDebugCube(300);
+        }
+        
+        function updateDebugCube(dist) {
+            if (!debugMesh || !camera) return;
+            debugMesh.scale.set(300, 300, dist);
+            debugMesh.position.set(0, 0, camera.position.z - (dist / 2));
         }
 
         function onMouseWheel(event) {
@@ -350,19 +418,48 @@
         }
 
         function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            camera.aspect = width / height;
             camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            composer.setSize(window.innerWidth, window.innerHeight);
-            composer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(width, height);
+            composer.setSize(width, height);
         }
 
         function animate() {
             requestAnimationFrame(animate);
-            camera.position.z += (targetZ - camera.position.z) * EASE_FACTOR;
+            if (!isReady) return;
+
+            camera.position.z += (targetZ - camera.position.z) * CAMERA_EASE_FACTOR;
+            
+            for (let i = 0; i < plusObjects.length; i++) {
+                const obj = plusObjects[i];
+                
+                const target = isGridMode ? obj.gridPos : obj.randomPos;
+                obj.mesh.position.lerp(target, OBJECT_EASE_FACTOR);
+
+                const dist = camera.position.z - obj.mesh.position.z;
+                
+                let alpha = 1.0;
+                if (dist > FADE_START_DIST) {
+                    const t = (dist - FADE_START_DIST) / (FADE_END_DIST - FADE_START_DIST);
+                    alpha = 1.0 - Math.min(Math.max(t, 0.0), 1.0); 
+                }
+                
+                obj.material.opacity = alpha;
+            }
+
+            if (debugMesh && debugMesh.visible && bokehPass) {
+                const dist = bokehPass.uniforms['focus'].value;
+                debugMesh.position.z = camera.position.z - (dist / 2);
+            }
+            
             composer.render();
         }
+
+        init();
+        animate();
+
     </script>
 </body>
 </html>
